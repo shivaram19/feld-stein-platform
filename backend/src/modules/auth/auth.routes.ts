@@ -69,7 +69,7 @@ router.post("/otp/verify", async (req, res, next) => {
         prisma.cart.create({ data: { customerId: customer.id } }),
         prisma.wishlist.create({ data: { customerId: customer.id } }),
         prisma.loyaltyAccount.create({
-          data: { customerId: customer.id, points: 50, description: "Welcome bonus" },
+          data: { customerId: customer.id, points: 50 },
         }),
       ])
     } else {
