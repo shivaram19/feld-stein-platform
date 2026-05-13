@@ -16,6 +16,7 @@ import agentRoutes from "./modules/agent/agent.routes"
 import personalizationRoutes from "./modules/personalization/personalization.routes"
 import searchRoutes from "./modules/search/search.routes"
 import biometricsRoutes from "./modules/biometrics/biometrics.routes"
+import voiceRoutes from "./modules/voice/voice.routes"
 
 export function createApp() {
   const app = express()
@@ -94,6 +95,7 @@ export function createApp() {
   app.use("/api/v1/personalization", personalizationRoutes)
   app.use("/api/v1/search", searchRoutes)
   app.use("/api/v1/biometrics", biometricsRoutes)
+  app.use("/api/v1/voice", voiceRoutes)
 
   app.use(notFoundHandler)
   app.use(errorHandler)
