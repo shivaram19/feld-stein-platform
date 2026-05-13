@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --canvas: #faf8f5;
+    --primary: #1c1917;
+    --accent: #c2410c;
+    --secondary: #78716c;
+    --surface: #f5f5f4;
+    --border-subtle: #e7e5e4;
+    --success: #16a34a;
+    --danger: #dc2626;
+    --brand-green: #2D5A3D;
+    --brand-gold: #C17F24;
+  }
+}
+
+@layer base {
+  body {
+    font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display), ui-serif, Georgia, serif;
+  }
+}
