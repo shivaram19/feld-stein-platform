@@ -1,0 +1,897 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum Role {
+  CUSTOMER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  PENDING_PAYMENT
+  PAID
+  PROCESSING
+  SHIPPED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+  REFUNDED
+  RETURNED
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentGateway {
+  RAZORPAY
+  STRIPE
+  COD
+  UPI
+  WALLET
+}
+
+enum LoyaltyTier {
+  BRONZE
+  SILVER
+  GOLD
+}
+
+enum LoyaltyTransactionType {
+  EARNED
+  REDEEMED
+  BONUS
+  EXPIRED
+}
+
+enum SubscriptionFrequency {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+  EXPIRED
+}
+
+enum CouponType {
+  PERCENTAGE
+  FIXED_AMOUNT
+  FREE_SHIPPING
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AgentType {
+  INVENTORY
+  PRICING
+  SUPPORT
+  CONTENT
+  FRAUD
+  ORCHESTRATOR
+}
+
+enum AgentStatus {
+  IDLE
+  RUNNING
+  PAUSED
+  ERROR
+}
+
+enum AgentTaskStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  RETRYING
+}
+
+enum BiometricRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum PersonalizationStrategy {
+  CONTROL
+  AI_BUNDLE
+  DYNAMIC_PRICE
+  CONTENT_ADAPT
+}
+
+// ─── Product Catalog ─────────────────────────────────────────────────────────
+
+model Category {
+  id          String    @id @default(cuid())
+  name        String
+  slug        String    @unique
+  description String?
+  imageUrl    String?
+  parentId    String?
+  parent      Category? @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children    Category[] @relation("CategoryHierarchy")
+  products    Product[]
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([slug])
+  @@index([parentId, isActive])
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String   @db.Text
+  shortDesc   String?
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id])
+  variants    ProductVariant[]
+  images      ProductImage[]
+  reviews     Review[]
+  benefits    String[]
+  ingredients String?
+  howToUse    String?  @db.Text
+  shelfLife   String?
+  isActive    Boolean  @default(true)
+  isFeatured  Boolean  @default(false)
+  metaTitle   String?
+  metaDesc    String?
+  // 2026: Hybrid vector search — pgvector embedding for semantic product discovery
+  // Vector databases are essential for semantic search; pgvector + pgvectorscale
+  // is the optimal choice for PostgreSQL-native workloads under 50M vectors [^VS1]
+  // [^VS1]: Firecrawl. (2026). Best Vector Databases in 2026. https://www.firecrawl.dev/blog/best-vector-databases
+  embedding   Unsupported("vector(1536)")?
+  searchVector Json?   // HNSW-indexed BM25 + vector hybrid fallback for edge runtimes
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([slug])
+  @@index([categoryId, isActive])
+  @@index([isFeatured, isActive])
+}
+
+model ProductVariant {
+  id                String   @id @default(cuid())
+  productId         String
+  product           Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sku               String   @unique
+  name              String
+  price             Decimal  @db.Decimal(10, 2)
+  comparePrice      Decimal? @db.Decimal(10, 2)
+  weightGrams       Int
+  stock             Int      @default(0)
+  lowStockThreshold Int      @default(10)
+  isActive          Boolean  @default(true)
+  inventoryLogs     InventoryLog[]
+  orderItems        OrderItem[]
+  dynamicPrices     DynamicPrice[]
+  cartItems         CartItem[]
+  wishlistItems     WishlistItem[]
+  subscriptions     Subscription[]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([productId, isActive])
+  @@index([sku])
+}
+
+model ProductImage {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String
+  alt       String?
+  sortOrder Int     @default(0)
+  isPrimary Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([productId, sortOrder])
+}
+
+model InventoryLog {
+  id        String         @id @default(cuid())
+  variantId String
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+  quantity  Int
+  reason    String
+  note      String?
+  agentId   String?        // 2026: Multi-agent attribution — every stock change logged to agent
+  agent     Agent?         @relation(fields: [agentId], references: [id])
+  createdAt DateTime       @default(now())
+
+  @@index([variantId, createdAt])
+  @@index([agentId])
+}
+
+// ─── Customers ───────────────────────────────────────────────────────────────
+
+model Customer {
+  id             String          @id @default(cuid())
+  phone          String          @unique
+  email          String?         @unique
+  name           String
+  gstin          String?
+  dateOfBirth    DateTime?
+  languagePref   String          @default("telugu")
+  isVerified     Boolean         @default(false)
+  deletedAt      DateTime?
+  addresses      Address[]
+  orders         Order[]
+  cart           Cart?
+  wishlist       Wishlist?
+  reviews        Review[]
+  loyaltyAccount LoyaltyAccount?
+  subscriptions  Subscription[]
+  // 2026: Behavioral biometrics — continuous authentication via device signals
+  // Behavioral biometrics analyzes typing cadence, mouse movements, touch pressure
+  // for ongoing session verification; 25% CAGR forecast through 2026 [^BB1]
+  // [^BB1]: Coinlaw. (2026). Biometric Payment Authentication Statistics 2026.
+  behaviorProfile CustomerBehaviorProfile?
+  sessions        CustomerSession[]
+  personalization PersonalizationProfile?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([phone])
+  @@index([email])
+  @@index([deletedAt])
+}
+
+model Address {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  label      String
+  line1      String
+  line2      String?
+  city       String
+  state      String
+  pincode    String
+  landmark   String?
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([customerId])
+}
+
+// ─── Behavioral Biometrics (2026 Cutting Edge) ───────────────────────────────
+
+model CustomerBehaviorProfile {
+  id                    String          @id @default(cuid())
+  customerId            String          @unique
+  customer              Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  // Keystroke dynamics: average dwell time (ms), flight time (ms)
+  keystrokeDwellAvg     Float?
+  keystrokeFlightAvg    Float?
+  // Mouse dynamics: average velocity, acceleration pattern hash
+  mouseVelocityPattern  String?
+  mouseEntropyScore     Float?
+  // Touch dynamics (mobile): pressure avg, swipe velocity pattern
+  touchPressureAvg      Float?
+  swipeVelocityPattern  String?
+  // Device fingerprint: stable hash of device characteristics
+  deviceFingerprint     String?
+  // Behavioral baseline established after N sessions
+  baselineSessions      Int             @default(0)
+  riskScore             Float           @default(0)
+  riskLevel             BiometricRiskLevel @default(LOW)
+  lastAnalyzedAt        DateTime?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  @@index([customerId])
+  @@index([riskLevel])
+  @@index([deviceFingerprint])
+}
+
+model CustomerSession {
+  id                String   @id @default(cuid())
+  customerId        String
+  customer          Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  sessionToken      String   @unique
+  // Real-time behavioral signals captured during session
+  keystrokeEvents   Json?    // array of {key, dwell, flight, timestamp}
+  mouseEvents       Json?    // array of {x, y, velocity, timestamp}
+  touchEvents       Json?    // array of {pressure, x, y, timestamp}
+  // Session context
+  deviceType        String?
+  screenResolution  String?
+  timezone          String?
+  // Risk assessment outcome
+  riskScore         Float    @default(0)
+  riskLevel         BiometricRiskLevel @default(LOW)
+  isBlocked         Boolean  @default(false)
+  blockReason       String?
+  endedAt           DateTime?
+  createdAt         DateTime @default(now())
+
+  @@index([customerId, createdAt])
+  @@index([sessionToken])
+  @@index([riskLevel, isBlocked])
+}
+
+// ─── Cart & Wishlist ─────────────────────────────────────────────────────────
+
+model Cart {
+  id        String     @id @default(cuid())
+  customerId String    @unique
+  customer  Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  items     CartItem[]
+  couponId  String?
+  coupon    Coupon?    @relation(fields: [couponId], references: [id])
+  updatedAt DateTime   @updatedAt
+}
+
+model CartItem {
+  id        String         @id @default(cuid())
+  cartId    String
+  cart      Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  variantId String
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+  quantity  Int
+  createdAt DateTime       @default(now())
+
+  @@unique([cartId, variantId])
+}
+
+model Wishlist {
+  id         String         @id @default(cuid())
+  customerId String         @unique
+  customer   Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  items      WishlistItem[]
+  updatedAt  DateTime       @updatedAt
+}
+
+model WishlistItem {
+  id         String         @id @default(cuid())
+  wishlistId String
+  wishlist   Wishlist       @relation(fields: [wishlistId], references: [id], onDelete: Cascade)
+  variantId  String
+  variant    ProductVariant @relation(fields: [variantId], references: [id])
+  createdAt  DateTime       @default(now())
+
+  @@unique([wishlistId, variantId])
+}
+
+// ─── Orders ──────────────────────────────────────────────────────────────────
+
+model Order {
+  id                String      @id @default(cuid())
+  orderNumber       String      @unique
+  customerId        String
+  customer          Customer    @relation(fields: [customerId], references: [id])
+  status            OrderStatus @default(PENDING)
+  statusHistory     OrderStatusHistory[]
+  items             OrderItem[]
+  shippingAddress   Json
+  billingAddress    Json
+  subtotal          Decimal     @db.Decimal(10, 2)
+  shippingCost      Decimal     @default(0) @db.Decimal(10, 2)
+  discountAmount    Decimal     @default(0) @db.Decimal(10, 2)
+  gstTotal          Decimal     @db.Decimal(10, 2)
+  grandTotal        Decimal     @db.Decimal(10, 2)
+  couponId          String?
+  coupon            Coupon?     @relation(fields: [couponId], references: [id])
+  couponCode        String?
+  notes             String?
+  trackingNumber    String?
+  courierName       String?
+  estimatedDelivery DateTime?
+  deliveredAt       DateTime?
+  payment           Payment?
+  invoice           Invoice?
+  subscriptionId    String?
+  subscription      Subscription? @relation(fields: [subscriptionId], references: [id])
+  // 2026: Agentic commerce — every order carries agent attribution
+  agentId           String?
+  agent             Agent?        @relation(fields: [agentId], references: [id])
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  @@index([customerId, createdAt])
+  @@index([status, createdAt])
+  @@index([orderNumber])
+}
+
+model OrderItem {
+  id               String         @id @default(cuid())
+  orderId          String
+  order            Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variantId        String
+  variant          ProductVariant @relation(fields: [variantId], references: [id])
+  quantity         Int
+  priceAtPurchase  Decimal        @db.Decimal(10, 2)
+  skuAtPurchase    String
+  nameAtPurchase   String
+  weightAtPurchase Int
+  discountAmount   Decimal        @default(0) @db.Decimal(10, 2)
+  gstRate          Decimal        @default(5) @db.Decimal(5, 2)
+  gstAmount        Decimal        @db.Decimal(10, 2)
+  total            Decimal        @db.Decimal(10, 2)
+}
+
+model OrderStatusHistory {
+  id        String      @id @default(cuid())
+  orderId   String
+  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status    OrderStatus
+  note      String?
+  createdAt DateTime    @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+// ─── Payments ────────────────────────────────────────────────────────────────
+
+model Payment {
+  id               String          @id @default(cuid())
+  orderId          String          @unique
+  order            Order           @relation(fields: [orderId], references: [id])
+  gateway          PaymentGateway
+  gatewayOrderId   String?
+  gatewayPaymentId String?         @unique
+  amount           Decimal         @db.Decimal(10, 2)
+  currency         String          @default("INR")
+  status           PaymentStatus   @default(PENDING)
+  method           String?
+  idempotencyKey   String          @unique
+  failureReason    String?
+  webhookEvents    WebhookEvent[]
+  refunds          Refund[]
+  // 2026: Payment orchestration — routing decision metadata
+  orchestrated     Boolean         @default(false)
+  orchestrationRule String?        // which rule selected this gateway
+  retryCount       Int             @default(0)
+  routedAt         DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([gatewayPaymentId])
+  @@index([status, createdAt])
+}
+
+model Refund {
+  id              String        @id @default(cuid())
+  paymentId       String
+  payment         Payment       @relation(fields: [paymentId], references: [id])
+  gatewayRefundId String        @unique
+  amount          Decimal       @db.Decimal(10, 2)
+  reason          String
+  status          PaymentStatus @default(PENDING)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model WebhookEvent {
+  id          String         @id @default(cuid())
+  gateway     PaymentGateway
+  eventType   String
+  payload     Json
+  signature   String
+  processed   Boolean        @default(false)
+  processedAt DateTime?
+  error       String?
+  payment     Payment?       @relation(fields: [paymentId], references: [id])
+  paymentId   String?
+  createdAt   DateTime       @default(now())
+
+  @@index([gateway, eventType, createdAt])
+  @@index([processed, createdAt])
+}
+
+// 2026: Payment Orchestration Rules — AI-driven gateway routing
+// Intelligent routing increases auth rates by 3%+ and reduces costs [^PO1]
+// [^PO1]: Trust Payments. (2026). Top Trends for Online Payments in 2026.
+model PaymentOrchestrationRule {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  priority      Int      @default(0)
+  // Matching conditions
+  currency      String?
+  countryCode   String?
+  minAmount     Decimal? @db.Decimal(10, 2)
+  maxAmount     Decimal? @db.Decimal(10, 2)
+  paymentMethod String?
+  // Action: which gateway to route to
+  targetGateway PaymentGateway
+  fallbackGateway PaymentGateway?
+  // AI scoring: ML model predicts gateway success probability
+  aiModelId     String?
+  successProbabilityThreshold Float @default(0.85)
+  isActive      Boolean  @default(true)
+  usageCount    Int      @default(0)
+  successCount  Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([isActive, priority])
+}
+
+// 2026: Agent Payments Protocol (AP2) — Google's framework for AI-agent transactions
+// AP2 enables cryptographically signed mandates, unbreakable audit trails [^AP2]
+// [^AP2]: Newgensoft. (2026). Banking Tech Trends Report 2026.
+model AP2Mandate {
+  id              String   @id @default(cuid())
+  agentId         String
+  agent           Agent    @relation(fields: [agentId], references: [id])
+  customerId      String
+  // Cryptographic mandate
+  mandateHash     String   @unique
+  signedPayload   String   // base64-encoded signed mandate
+  publicKey       String   // agent's public key for verification
+  scope           String   // e.g. "orders:create,payments:authorize"
+  maxAmount       Decimal  @db.Decimal(10, 2)
+  expiryAt        DateTime
+  isRevoked       Boolean  @default(false)
+  revokedAt       DateTime?
+  revokedReason   String?
+  usageCount      Int      @default(0)
+  lastUsedAt      DateTime?
+  createdAt       DateTime @default(now())
+
+  @@index([agentId, isRevoked])
+  @@index([mandateHash])
+}
+
+// ─── Invoices ────────────────────────────────────────────────────────────────
+
+model Invoice {
+  id            String   @id @default(cuid())
+  orderId       String   @unique
+  order         Order    @relation(fields: [orderId], references: [id])
+  invoiceNumber String   @unique
+  irn           String?
+  qrCodeUrl     String?
+  pdfUrl        String?
+  hsnCode       String
+  gstRate       Decimal  @db.Decimal(5, 2)
+  taxableAmount Decimal  @db.Decimal(10, 2)
+  cgst          Decimal  @db.Decimal(10, 2)
+  sgst          Decimal  @db.Decimal(10, 2)
+  igst          Decimal  @default(0) @db.Decimal(10, 2)
+  totalGst      Decimal  @db.Decimal(10, 2)
+  grandTotal    Decimal  @db.Decimal(10, 2)
+  signedData    String?
+  isCancelled   Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  @@index([invoiceNumber])
+  @@index([irn])
+}
+
+// ─── Coupons ─────────────────────────────────────────────────────────────────
+
+model Coupon {
+  id             String      @id @default(cuid())
+  code           String      @unique
+  type           CouponType
+  value          Decimal     @db.Decimal(10, 2)
+  minOrderAmount Decimal?    @db.Decimal(10, 2)
+  maxDiscount    Decimal?    @db.Decimal(10, 2)
+  usageLimit     Int?
+  usageCount     Int         @default(0)
+  startDate      DateTime
+  endDate        DateTime?
+  isActive       Boolean     @default(true)
+  appliesTo      String[]
+  orders         Order[]
+  carts          Cart[]
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([code, isActive])
+}
+
+// ─── Reviews ─────────────────────────────────────────────────────────────────
+
+model Review {
+  id         String       @id @default(cuid())
+  productId  String
+  product    Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  customerId String
+  customer   Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  rating     Int
+  title      String?
+  body       String       @db.Text
+  images     String[]
+  isVerified Boolean      @default(false)
+  isHelpful  Int          @default(0)
+  status     ReviewStatus @default(PENDING)
+  reply      String?      @db.Text
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@unique([productId, customerId])
+  @@index([productId, status, createdAt])
+  @@index([customerId])
+}
+
+// ─── Loyalty (Stein Circle) ──────────────────────────────────────────────────
+
+model LoyaltyAccount {
+  id             String               @id @default(cuid())
+  customerId     String               @unique
+  customer       Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  points         Int                  @default(0)
+  tier           LoyaltyTier          @default(BRONZE)
+  lifetimePoints Int                  @default(0)
+  transactions   LoyaltyTransaction[]
+  updatedAt      DateTime             @updatedAt
+}
+
+model LoyaltyTransaction {
+  id          String               @id @default(cuid())
+  accountId   String
+  account     LoyaltyAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  points      Int
+  type        LoyaltyTransactionType
+  orderId     String?
+  description String
+  createdAt   DateTime             @default(now())
+
+  @@index([accountId, createdAt])
+}
+
+// ─── Subscriptions ───────────────────────────────────────────────────────────
+
+model Subscription {
+  id               String              @id @default(cuid())
+  customerId       String
+  customer         Customer            @relation(fields: [customerId], references: [id])
+  variantId        String
+  variant          ProductVariant      @relation(fields: [variantId], references: [id])
+  frequency        SubscriptionFrequency
+  quantity         Int                 @default(1)
+  status           SubscriptionStatus  @default(ACTIVE)
+  nextDeliveryDate DateTime
+  totalDeliveries  Int                 @default(0)
+  pauseUntil       DateTime?
+  cancelReason     String?
+  orders           Order[]
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([customerId, status])
+  @@index([nextDeliveryDate, status])
+}
+
+// ─── WhatsApp Templates ──────────────────────────────────────────────────────
+
+model WhatsAppTemplate {
+  id             String   @id @default(cuid())
+  name           String   @unique
+  category       String
+  language       String   @default("en")
+  body           String   @db.Text
+  header         String?
+  footer         String?
+  variables      String[]
+  metaTemplateId String?
+  status         String   @default("PENDING")
+  isActive       Boolean  @default(true)
+  usageCount     Int      @default(0)
+  messageLogs    WhatsAppMessageLog[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model WhatsAppMessageLog {
+  id         String           @id @default(cuid())
+  phone      String
+  templateId String?
+  template   WhatsAppTemplate? @relation(fields: [templateId], references: [id])
+  body       String           @db.Text
+  type       String
+  status     String
+  messageId  String?
+  error      String?
+  cost       Decimal?         @db.Decimal(10, 4)
+  createdAt  DateTime         @default(now())
+
+  @@index([phone, createdAt])
+  @@index([status, createdAt])
+}
+
+// ─── Multi-Agent AI Engine (2026 Cutting Edge) ───────────────────────────────
+
+model Agent {
+  id              String          @id @default(cuid())
+  name            String          @unique
+  type            AgentType
+  description     String?
+  // Agent configuration
+  systemPrompt    String          @db.Text
+  modelConfig     Json            // { model: "gpt-5", temperature: 0.2, maxTokens: 2000 }
+  tools           String[]        // registered tool names
+  // Orchestration
+  parentAgentId   String?
+  parentAgent     Agent?          @relation("AgentHierarchy", fields: [parentAgentId], references: [id])
+  childAgents     Agent[]         @relation("AgentHierarchy")
+  // State
+  status          AgentStatus     @default(IDLE)
+  lastRunAt       DateTime?
+  runCount        Int             @default(0)
+  successRate     Float           @default(1.0)
+  // Agentic commerce — orders created by this agent
+  orders          Order[]
+  ap2Mandates     AP2Mandate[]
+  taskExecutions  AgentExecution[]
+  inventoryLogs   InventoryLog[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([type, status])
+  @@index([parentAgentId])
+}
+
+model AgentExecution {
+  id          String          @id @default(cuid())
+  agentId     String
+  agent       Agent           @relation(fields: [agentId], references: [id])
+  taskType    String          // e.g. "price_optimization", "inventory_reorder"
+  status      AgentTaskStatus @default(PENDING)
+  input       Json            // task parameters
+  output      Json?           // agent result
+  reasoning   String?         @db.Text // chain-of-thought / reasoning trace
+  tokensUsed  Int             @default(0)
+  costUsd     Float           @default(0)
+  latencyMs   Int?
+  error       String?
+  retryCount  Int             @default(0)
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime        @default(now())
+
+  @@index([agentId, status])
+  @@index([taskType, createdAt])
+  @@index([status, createdAt])
+}
+
+// ─── Personalization Engine (2026 Cutting Edge) ──────────────────────────────
+
+model PersonalizationProfile {
+  id                String   @id @default(cuid())
+  customerId        String   @unique
+  customer          Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  // Real-time behavioral signals
+  viewedCategories  String[] // category slugs, ordered by recency
+  viewedProducts    String[] // product slugs, ordered by recency
+  searchHistory     String[] // search queries
+  // Computed affinity scores (AI-derived)
+  categoryAffinities Json?   // { "cold-pressed-oils": 0.92, "ghee": 0.45 }
+  priceSensitivity  Float?   // 0 = price-insensitive, 1 = highly price-sensitive
+  // Dynamic content variants
+  activeStrategy    PersonalizationStrategy @default(CONTROL)
+  // A/B test assignment
+  testVariant       String?  // "variant_a", "variant_b"
+  // 2026: AI personalization generates 40% more revenue; 31% of ecommerce revenue
+  // from recommendations alone. Real-time adaptation at every layer is table stakes [^PE1]
+  // [^PE1]: Netguru. (2026). 7 Headless Commerce Trends That Matter Most in 2026.
+  lastComputedAt    DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([activeStrategy])
+}
+
+model DynamicPrice {
+  id          String         @id @default(cuid())
+  variantId   String
+  variant     ProductVariant @relation(fields: [variantId], references: [id])
+  // AI pricing agent output
+  basePrice   Decimal        @db.Decimal(10, 2)
+  dynamicPrice Decimal       @db.Decimal(10, 2)
+  discountPct Float          @default(0)
+  // Reasoning
+  reason      String?        @db.Text // AI explanation for price change
+  factors     Json?          // { demand: 0.8, seasonality: 0.3, competitor: -0.1 }
+  // Validity window
+  validFrom   DateTime
+  validUntil  DateTime?
+  isActive    Boolean        @default(true)
+  agentId     String?        // which pricing agent generated this
+  createdAt   DateTime       @default(now())
+
+  @@index([variantId, isActive])
+  @@index([validFrom, validUntil])
+}
+
+model AIBundle {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  // AI-generated product bundle
+  productIds  String[] // array of product IDs
+  bundlePrice Decimal  @db.Decimal(10, 2)
+  originalPrice Decimal @db.Decimal(10, 2)
+  // Targeting
+  targetCategories String[]
+  targetCustomerSegments String[]
+  // Performance
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  conversions Int      @default(0)
+  revenue     Decimal  @default(0) @db.Decimal(10, 2)
+  // AI reasoning
+  reasoning   String?  @db.Text
+  agentId     String?
+  isActive    Boolean  @default(true)
+  validFrom   DateTime @default(now())
+  validUntil  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive, validFrom])
+  @@index([targetCategories])
+}
+
+// ─── Semantic Search Analytics ───────────────────────────────────────────────
+
+model SemanticSearchLog {
+  id          String   @id @default(cuid())
+  query       String
+  queryVector Unsupported("vector(1536)")?
+  // Hybrid search results
+  keywordResults Int   @default(0)
+  vectorResults  Int   @default(0)
+  hybridResults  Int   @default(0)
+  // Performance
+  latencyMs   Int?
+  // User context
+  customerId  String?
+  sessionId   String?
+  // Outcome
+  clickedProducts String[]
+  converted   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([query])
+  @@index([createdAt])
+  @@index([customerId])
+}
+
+// ─── Audit Log ───────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  tableName     String
+  recordId      String
+  action        String
+  oldData       Json?
+  newData       Json?
+  changedFields String[]
+  userId        String?
+  ipAddress     String?
+  userAgent     String?
+  // 2026: Agentic audit — log which agent triggered the change
+  agentId       String?
+  createdAt     DateTime @default(now())
+
+  @@index([tableName, recordId])
+  @@index([createdAt])
+  @@index([action, createdAt])
+}
