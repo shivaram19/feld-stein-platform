@@ -4,6 +4,7 @@ import "./globals.css"
 import { Header } from "@/components/Header"
 import { Footer } from "@/components/Footer"
 import BehavioralCollector from "@/components/BehavioralCollector"
+import { VoiceAssistant } from "@/components/VoiceAssistant"
 
 const cormorant = Cormorant({
   variable: "--font-display",
@@ -46,8 +47,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Footer />
         <BehavioralCollector
           sessionToken={sessionToken}
-          apiUrl={process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api/v1"}
+          apiUrl={process.env.NEXT_PUBLIC_API_URL || "http://localhost:3007/api/v1"}
         />
+        <VoiceAssistant />
       </body>
     </html>
   )

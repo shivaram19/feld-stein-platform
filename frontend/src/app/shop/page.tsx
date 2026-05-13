@@ -5,6 +5,7 @@ import Link from "next/link"
 import Image from "next/image"
 import { useSearchParams } from "next/navigation"
 import { useCartStore } from "@/lib/store"
+import { VoiceSearch } from "@/components/VoiceSearch"
 
 interface Product {
   id: string
@@ -79,13 +80,26 @@ export default function ShopPage() {
               />
               AI Search
             </label>
-            <input
-              type="text"
-              placeholder={isSemantic ? "Describe what you need..." : "Search oils..."}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="px-4 py-2 rounded-lg border border-border-subtle bg-canvas font-body text-sm focus:outline-none focus:border-brand-green w-56"
-            />
+            <div className="flex items-center gap-2">
+              <VoiceSearch
+                onSearch={(query) => {
+                  setSearch(query)
+                  // Trigger search after a brief delay to let state update
+                  setTimeout(() => {
+                    const params = new URLSearchParams(window.location.search)
+                    params.set("search", query)
+                    window.history.replaceState(null, "", `?${params}`)
+                  }, 50)
+                }}
+              />
+              <input
+                type="text"
+                placeholder={isSemantic ? "Describe what you need..." : "Search oils..."}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="px-4 py-2 rounded-lg border border-border-subtle bg-canvas font-body text-sm focus:outline-none focus:border-brand-green w-56"
+              />
+            </div>
           </div>
         </div>
 
